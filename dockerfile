@@ -4,7 +4,8 @@ WORKDIR /app
 
 COPY . . 
 
-RUN pip install pip3 install torch torchvision torchaudio 
+RUN pip install --upgrade pip
+RUN pip3 install torch torchvision torchaudio 
 RUN pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ 
 
-CMD [ "python", "train.py" ]
+CMD [ "bash", "train.sh" ]
