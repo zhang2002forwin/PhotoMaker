@@ -3,46 +3,30 @@
 参考论文，总损失为:
   L = LAMBDA_REC * L_rec + LAMBDA_CON * L_con + LAMBDA_ADV * L_adv
 
-  - L_rec:  重建损失 (恒等映射应保持不变)
-            当输入和目标风格相同时，输出应等于输入。
-  - L_con:  一致性损失 (相同内容 -> 相同预设)
-            给定同一图像的两个扰动版本 I_i 和 I_j，
-            模型预测的 T_i 和 T_j 应产生一致的结果。
-  - L_adv:  对抗损失 (可选，用于提升风格真实感)
+论文损失 (Sec. 3.3):
+  - L_con (Eq. 5): 一致性损失，约束归一化空间 Z
+    L_con = ‖nDNCM(I_i, d_i) − nDNCM(I_j, d_j)‖₂
+  - L_rec (Eq. 7): 重建损失，交叉重建
+    L_rec = ‖Y_i − I_i‖₁ + ‖Y_j − I_j‖₁
+    其中 Y_i = sDNCM(Z_j, r_i), Y_j = sDNCM(Z_i, r_j)
+  - L_adv: 对抗损失 (可选)
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-def reconstruction_loss(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """L_rec: L1 重建损失。
-
-    模型在恒等映射场景下 (输入即目标) 应能重建出原始图像。
-
-    Args:
-        output: (B, 3, H, W) 模型输出
-        target: (B, 3, H, W) 目标图像
-
-    Returns:
-        loss: 标量损失值
-    """
-    return F.l1_loss(output, target)
-
-
-def consistency_loss(
+def reconstruction_loss(
     model: nn.Module,
     I_i: torch.Tensor,
     I_j: torch.Tensor,
 ) -> torch.Tensor:
-    """L_con: 一致性损失。
+    """L_rec: 交叉重建损失 (论文 Eq. 7)。
 
-    论文核心思想: 同一图像的两个扰动版本，经过模型去除扰动后，
-    应该产生相同的"预设" (T 矩阵) 和相同的输出。
-
-    约束条件:
-      1. T_i ≈ T_j  (预测的变换矩阵应一致)
-      2. model(I_i) ≈ model(I_j)  (输出应一致)
+    两阶段交叉重建 (论文 Eq. 6):
+      Z_i = nDNCM(I_i, d_i),  Z_j = nDNCM(I_j, d_j)
+      Y_i = sDNCM(Z_j, r_i),  Y_j = sDNCM(Z_i, r_j)
+    L_rec = ‖Y_i − I_i‖₁ + ‖Y_j − I_j‖₁
 
     Args:
         model: NeuralPreset 模型
@@ -52,16 +36,46 @@ def consistency_loss(
     Returns:
         loss: 标量损失值
     """
-    out_i, T_i = model(I_i)
-    out_j, T_j = model(I_j)
+    # 两阶段前向
+    Z_i, d_i, r_i = model(I_i)
+    Z_j, d_j, r_j = model(I_j)
 
-    # T 矩阵一致性
-    loss_T = F.l1_loss(T_i, T_j)
+    # 交叉重建: Y_i = sDNCM(Z_j, r_i), Y_j = sDNCM(Z_i, r_j)
+    Y_i = model.dncm(Z_j, r_i, use_nDNCM=False)
+    Y_j = model.dncm(Z_i, r_j, use_nDNCM=False)
 
-    # 输出一致性
-    loss_out = F.l1_loss(out_i, out_j)
+    # L1 重建损失
+    loss = F.l1_loss(Y_i, I_i) + F.l1_loss(Y_j, I_j)
+    return loss
 
-    return loss_T + loss_out
+
+def consistency_loss(
+    model: nn.Module,
+    I_i: torch.Tensor,
+    I_j: torch.Tensor,
+) -> torch.Tensor:
+    """L_con: 一致性损失 (论文 Eq. 5)。
+
+    约束归一化颜色空间 Z 的一致性:
+      L_con = ‖Z_i − Z_j‖₂
+      = ‖nDNCM(I_i, d_i) − nDNCM(I_j, d_j)‖₂
+
+    同一图像的两个扰动版本，经过 nDNCM 归一化后应得到相同结果。
+
+    Args:
+        model: NeuralPreset 模型
+        I_i: (B, 3, H, W) 扰动版本 1
+        I_j: (B, 3, H, W) 扰动版本 2
+
+    Returns:
+        loss: 标量损失值
+    """
+    # nDNCM: 颜色归一化
+    Z_i, _, _ = model(I_i)
+    Z_j, _, _ = model(I_j)
+
+    # L2 一致性损失
+    return F.mse_loss(Z_i, Z_j)
 
 
 def adversarial_loss(
@@ -82,12 +96,10 @@ def adversarial_loss(
         loss: 标量损失值
     """
     if mode == "generator":
-        # 生成器希望判别器将输出判定为真 (标签为 1)
         logits, _ = discriminator(output)
         target = torch.ones_like(logits[:, 0])
         return F.mse_loss(logits[:, 0], target)
     else:
-        # 判别器需要区分真伪
         logits_real, _ = discriminator(real)
         logits_fake, _ = discriminator(output.detach())
         target_real = torch.ones_like(logits_real[:, 0])

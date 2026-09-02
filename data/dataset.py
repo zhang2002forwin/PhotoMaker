@@ -39,12 +39,15 @@ class ColorPerturbationDataset(Dataset):
         self.image_size = image_size
         self.lut_size = lut_size
 
-        # 收集图像路径
+        # 收集图像路径 (递归查找子目录, 如 train2017/val2017)
         self.image_paths = []
         for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp"):
-            self.image_paths.extend(glob.glob(os.path.join(coco_root, ext)))
+            self.image_paths.extend(
+                glob.glob(os.path.join(coco_root, "**", ext), recursive=True)
+            )
+        self.image_paths = sorted(set(self.image_paths))
         if len(self.image_paths) == 0:
-            raise RuntimeError(f"在 {coco_root} 中未找到图像")
+            raise RuntimeError(f"在 {coco_root} 中未找到图像 (已递归搜索子目录)")
 
         # 加载 LUT
         self.luts = []

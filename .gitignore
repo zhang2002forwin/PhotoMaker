@@ -1,0 +1,29 @@
+# 检查点
+ckpts/
+checkpoints/
+
+# 验证结果
+eval_res/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 虚拟环境
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# wandb
+wandb/
+
+# 大文件
+*.pth
+
+# OS
+.DS_Store
+Thumbs.db

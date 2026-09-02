@@ -49,7 +49,7 @@ class Config:
     # 损失函数权重 (参考论文 λ=10)
     LAMBDA_REC = 1.0      # 重建损失权重
     LAMBDA_CON = 10.0     # 一致性损失权重 (论文 λ=10)
-    LAMBDA_ADV = 0.01     # 对抗损失权重 (设较小值，参考色彩迁移常用做法)
+    LAMBDA_ADV = 0.00    # 对抗损失权重 (设较小值，参考色彩迁移常用做法)
 
     # ==================== LUT 扰动配置 ====================
     LUT_SIZE = 33         # 3D LUT 网格尺寸 (33 级是常用尺寸)
@@ -59,9 +59,13 @@ class Config:
     COCO_ROOT = "data/coco/train2017"  # MS COCO 训练集目录
     VAL_IMAGES = "data/val_images"     # 验证图像目录
 
+    # ==================== 验证集配置 ====================
+    EVAL_DATA_DIR = "eval_data"       # 验证集目录 (含 content_img/ 和 style_img/)
+    EVAL_RES_DIR = "eval_res"         # 验证结果保存目录
+    EVAL_INTERVAL = 200               # 每多少 step 做一次验证
+
     # ==================== 输出路径 ====================
     CHECKPOINT_DIR = "checkpoints"  # 模型检查点保存目录
-    LOG_DIR = "logs"                # TensorBoard 日志目录
 
     # ==================== 设备 ====================
     DEVICE = "cuda"
@@ -93,8 +97,6 @@ def get_train_parser():
     p.add_argument("--resume", type=str, default=None,
                    help="从指定检查点恢复训练")
     # ==================== wandb 参数 ====================
-    p.add_argument("--use_wandb", action="store_true",
-                   help="启用 wandb 日志记录")
     p.add_argument("--wandb_project", type=str, default="neural-preset",
                    help="wandb 项目名称")
     p.add_argument("--wandb_run_name", type=str, default=None,

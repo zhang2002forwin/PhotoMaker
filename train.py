@@ -20,13 +20,10 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+import torchvision.transforms.functional as TF
+from PIL import Image
 
-try:
-    import wandb
-    HAS_WANDB = True
-except ImportError:
-    HAS_WANDB = False
+import wandb
 
 # 将项目根目录加入路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +37,83 @@ from losses import (
     adversarial_loss,
     total_variation_loss,
 )
+
+
+def run_validation(model, cfg, step, device):
+    """在验证集上运行风格迁移并保存拼接结果。
+
+    对 eval_data/content_img 中的每张内容图，
+    与 eval_data/style_img 中的每张风格图做风格迁移，
+    将 [content | style(压缩) | result] 横向拼接保存。
+
+    两阶段流程:
+      1. 从 style 图提取 {d_s, r_s}
+      2. 从 content 图提取 {d_c, r_c}
+      3. Z_c = nDNCM(content, d_c)
+      4. result = sDNCM(Z_c, r_s)
+
+    Args:
+        model: NeuralPreset 模型
+        cfg: 配置对象
+        step: 当前全局 step
+        device: 计算设备
+    """
+    content_dir = os.path.join(cfg.EVAL_DATA_DIR, "content_img")
+    style_dir = os.path.join(cfg.EVAL_DATA_DIR, "style_img")
+    out_dir = os.path.join(cfg.EVAL_RES_DIR, f"step_{step:07d}")
+    os.makedirs(out_dir, exist_ok=True)
+
+    content_files = sorted(
+        f for f in os.listdir(content_dir)
+        if f.lower().endswith((".jpg", ".jpeg", ".png"))
+    )
+    style_files = sorted(
+        f for f in os.listdir(style_dir)
+        if f.lower().endswith((".jpg", ".jpeg", ".png"))
+    )
+
+    model.eval()
+    with torch.no_grad():
+        for c_name in content_files:
+            # 内容图: 保持原始大小 (不压缩)
+            content = TF.to_tensor(Image.open(os.path.join(content_dir, c_name)).convert("RGB")).unsqueeze(0).to(device)
+            for s_name in style_files:
+                # 风格图: 压缩到 THUMB_SIZE
+                style_img = Image.open(os.path.join(style_dir, s_name)).convert("RGB")
+                style_img = TF.resize(style_img, cfg.THUMB_SIZE)
+                style = TF.to_tensor(style_img).unsqueeze(0).to(device)
+
+                # 从 style 图提取 {d_s, r_s}
+                _, d_s, r_s = model(style)
+                # 从 content 图提取 {d_c, r_c}
+                Z_c, d_c, _ = model(content)
+                # sDNCM: 风格化
+                result = model.dncm(Z_c, r_s, use_nDNCM=False)
+
+                # 拼接: content (原尺寸) | style (压缩) | result
+                # content 保持原尺寸不压缩; style 保持压缩尺寸 (THUMB_SIZE); result 与 content 同尺寸
+                H, W = content.shape[-2:]
+                content_pil = TF.to_pil_image(content.squeeze(0).clamp(0, 1))
+                # style 保持压缩尺寸 (THUMB_SIZE x THUMB_SIZE)，不放大
+                style_pil = TF.to_pil_image(style.squeeze(0).clamp(0, 1))
+                # result 与 content 同尺寸
+                result_pil = TF.to_pil_image(result.squeeze(0).clamp(0, 1))
+                result_pil = result_pil.resize((W, H), Image.LANCZOS)
+
+                # 横向拼接 (canvas 高度取 content 高度，style 贴在其列顶部)
+                total_w = content_pil.width + style_pil.width + result_pil.width
+                canvas = Image.new("RGB", (total_w, H))
+                x = 0
+                for img in [content_pil, style_pil, result_pil]:
+                    canvas.paste(img, (x, 0))
+                    x += img.width
+
+                out_name = f"{os.path.splitext(c_name)[0]}__{os.path.splitext(s_name)[0]}.jpg"
+                canvas.save(os.path.join(out_dir, out_name), quality=95)
+
+    model.train()
+    print(f"[验证] step={step} 结果已保存到 {out_dir} ({len(content_files)*len(style_files)} 张)")
+    return out_dir
 
 
 def train(args):
@@ -60,7 +134,6 @@ def train(args):
     cfg.LUT_DIR = args.lut_dir
 
     os.makedirs(cfg.CHECKPOINT_DIR, exist_ok=True)
-    os.makedirs(cfg.LOG_DIR, exist_ok=True)
 
     # ==================== 数据 ====================
     dataset = ColorPerturbationDataset(
@@ -117,34 +190,29 @@ def train(args):
         start_epoch = ckpt["epoch"] + 1
         print(f"从 epoch {start_epoch} 恢复训练")
 
-    # ==================== TensorBoard ====================
-    writer = SummaryWriter(log_dir=cfg.LOG_DIR)
-
     # ==================== wandb ====================
-    use_wandb = args.use_wandb and HAS_WANDB
-    if args.use_wandb and not HAS_WANDB:
-        print("警告: 未安装 wandb，请运行 pip install wandb")
-    if use_wandb:
-        wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            name=args.wandb_run_name,
-            config={
-                "batch_size": cfg.BATCH_SIZE,
-                "epochs": cfg.NUM_EPOCHS,
-                "lr": cfg.LR_E,
-                "lr_step_size": cfg.LR_STEP_SIZE,
-                "lr_gamma": cfg.LR_GAMMA,
-                "image_size": cfg.IMAGE_SIZE,
-                "k_dim": cfg.K_DIM,
-                "lambda_rec": cfg.LAMBDA_REC,
-                "lambda_con": cfg.LAMBDA_CON,
-                "lambda_adv": cfg.LAMBDA_ADV,
-                "pretrained_path": args.pretrained_path or "auto_download",
-            },
-        )
-        print(f"wandb 已启用: project={args.wandb_project}, run={wandb.run.name}")
-        print(f"wandb 链接: {wandb.run.url}")
+    wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_run_name,
+        config={
+            "batch_size": cfg.BATCH_SIZE,
+            "epochs": cfg.NUM_EPOCHS,
+            "lr": cfg.LR_E,
+            "lr_step_size": cfg.LR_STEP_SIZE,
+            "lr_gamma": cfg.LR_GAMMA,
+            "image_size": cfg.IMAGE_SIZE,
+            "k_dim": cfg.K_DIM,
+            "lambda_rec": cfg.LAMBDA_REC,
+            "lambda_con": cfg.LAMBDA_CON,
+            "lambda_adv": cfg.LAMBDA_ADV,
+            "eval_interval": cfg.EVAL_INTERVAL,
+            "pretrained_path": args.pretrained_path or "auto_download",
+        },
+    )
+    os.makedirs(cfg.EVAL_RES_DIR, exist_ok=True)
+    print(f"wandb 已启用: project={args.wandb_project}, run={wandb.run.name}")
+    print(f"wandb 链接: {wandb.run.url}")
 
     # ==================== 训练循环 ====================
     step = 0
@@ -156,7 +224,6 @@ def train(args):
         n_batches = 0
 
         for batch_idx, batch in enumerate(loader):
-            I = batch["I"].to(device)
             I_i = batch["I_i"].to(device)
             I_j = batch["I_j"].to(device)
 
@@ -165,22 +232,26 @@ def train(args):
             # ================================
             opt_G.zero_grad()
 
-            # L_rec: 恒等重建
-            # 当输入=目标 (无风格变化) 时，输出应等于输入
-            out_identity, _ = model(I)
-            loss_rec = reconstruction_loss(out_identity, I)
+            # L_rec: 交叉重建损失 (论文 Eq. 6-7)
+            #   Z_i = nDNCM(I_i, d_i),  Z_j = nDNCM(I_j, d_j)
+            #   Y_i = sDNCM(Z_j, r_i),  Y_j = sDNCM(Z_i, r_j)
+            # L_rec = ‖Y_i − I_i‖₁ + ‖Y_j − I_j‖₁
+            loss_rec = reconstruction_loss(model, I_i, I_j)
 
-            # L_con: 两个扰动版本之间的一致性
+            # L_con: 归一化空间一致性 (论文 Eq. 5)
+            #   L_con = ‖Z_i − Z_j‖₂ = ‖nDNCM(I_i, d_i) − nDNCM(I_j, d_j)‖₂
             loss_con = consistency_loss(model, I_i, I_j)
 
             # L_adv: 对抗损失 (生成器部分)
-            out_i, _ = model(I_i)
+            # 用 Y_i 作为生成结果
+            Z_i, d_i, r_i = model(I_i)
+            Y_i = model.dncm(Z_i, r_i, use_nDNCM=False)
             loss_adv_g = adversarial_loss(
-                discriminator, out_i, I_i, mode="generator"
+                discriminator, Y_i, I_i, mode="generator"
             )
 
             # TV 正则化 (小权重)
-            loss_tv = total_variation_loss(out_i)
+            loss_tv = total_variation_loss(Y_i)
 
             loss_G = (
                 cfg.LAMBDA_REC * loss_rec
@@ -197,7 +268,7 @@ def train(args):
             # ================================
             opt_D.zero_grad()
             loss_adv_d = adversarial_loss(
-                discriminator, out_i.detach(), I_i, mode="discriminator"
+                discriminator, Y_i.detach(), I_i, mode="discriminator"
             )
             loss_adv_d.backward()
             opt_D.step()
@@ -211,18 +282,11 @@ def train(args):
             n_batches += 1
             step += 1
 
-            # 每个 step 都记录 loss 到 wandb (step 级曲线)
-            if use_wandb:
-                wandb.log({
-                    "Step/rec": loss_rec.item(),
-                    "Step/con": loss_con.item(),
-                    "Step/adv_g": loss_adv_g.item(),
-                    "Step/adv_d": loss_adv_d.item(),
-                    "Step/total_G": loss_G.item(),
-                    "Step/epoch": epoch + 1,
-                }, step=step)
+            # 定期验证
+            if step % cfg.EVAL_INTERVAL == 0:
+                run_validation(model, cfg, step, device)
 
-            # 每 50 个 batch 打印一次 + 记录 TensorBoard
+            # 每 50 个 batch 打印一次
             if batch_idx % 50 == 0:
                 print(
                     f"Epoch [{epoch+1}/{cfg.NUM_EPOCHS}] "
@@ -232,11 +296,6 @@ def train(args):
                     f"L_adv_g={loss_adv_g.item():.4f} "
                     f"L_adv_d={loss_adv_d.item():.4f}"
                 )
-                writer.add_scalar("Loss/rec", loss_rec.item(), step)
-                writer.add_scalar("Loss/con", loss_con.item(), step)
-                writer.add_scalar("Loss/adv_g", loss_adv_g.item(), step)
-                writer.add_scalar("Loss/adv_d", loss_adv_d.item(), step)
-                writer.add_scalar("Loss/total_G", loss_G.item(), step)
 
         # ---- Epoch 汇总 ----
         avg = {k: v / max(n_batches, 1) for k, v in epoch_losses.items()}
@@ -247,17 +306,14 @@ def train(args):
             f"L_adv_g={avg['adv_g']:.4f} L_adv_d={avg['adv_d']:.4f} "
             f"lr={current_lr:.2e} ===\n"
         )
-        writer.add_scalar("LR/lr", current_lr, epoch)
-
-        if use_wandb:
-            wandb.log({
-                "Epoch/rec": avg["rec"],
-                "Epoch/con": avg["con"],
-                "Epoch/adv_g": avg["adv_g"],
-                "Epoch/adv_d": avg["adv_d"],
-                "Epoch/total": avg["total"],
-                "LR/lr": current_lr,
-            }, step=epoch)
+        wandb.log({
+            "Epoch/rec": avg["rec"],
+            "Epoch/con": avg["con"],
+            "Epoch/adv_g": avg["adv_g"],
+            "Epoch/adv_d": avg["adv_d"],
+            "Epoch/total": avg["total"],
+            "LR/lr": current_lr,
+        }, step=epoch)
 
         # ---- 学习率衰减 ----
         scheduler_G.step()
@@ -290,9 +346,7 @@ def train(args):
             latest_path,
         )
 
-    writer.close()
-    if use_wandb:
-        wandb.finish()
+    wandb.finish()
     print("训练完成。")
 
 

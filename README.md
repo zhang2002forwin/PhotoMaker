@@ -26,7 +26,7 @@ Y = I(h*w, 3) @ P(3, k) @ T(k, k) @ Q(k, 3)
 1. **数据来源**：MS COCO 图像 + ~5000 个 LUT 文件
 2. **颜色扰动**：对每张图像 I 用 LUT + 随机滤镜生成两个扰动版本 I_i, I_j
 3. **损失函数**：
-   - `L_rec`：重建损失（恒等映射应保持不变）
+   - `L_rec`：重建损失（扰动图 I_i 应能重建出原图 I，学习逆颜色变换）
    - `L_con`：一致性损失（同一图像的两个扰动应产生相同的 T 和输出）
    - `L_adv`：对抗损失（风格真实性）
 
@@ -96,10 +96,10 @@ python train.py \
 python train.py --resume checkpoints/latest.pth --coco_root data/coco/train2017
 ```
 
-使用 TensorBoard 监控训练：
+使用 wandb 监控训练（默认启用，需先 `wandb login`）：
 
 ```bash
-tensorboard --logdir logs
+python train.py --wandb_project neural-preset ...
 ```
 
 ## 推理
@@ -167,7 +167,7 @@ python inference.py \
 1. **LUT 文件**：论文使用约 5000 个 LUT 文件。如果没有，代码会生成随机平滑 LUT 替代，效果类似但可能略有差异。
 2. **判别器 D**：论文中 D 主要用于风格相似度度量（Appendix B），需要 700+ 风格类别的标注数据。本实现用轻量分类器近似，对抗损失权重设为 0.01。
 3. **训练数据**：论文使用 MS COCO，需自行下载。
-4. **编码器初始化**：FC 最后一层零初始化，使训练初期 T≈0，映射接近恒等。
+4. **编码器初始化**：FC 最后一层权重零初始化、偏置初始化为展平的单位阵，使训练初期 T≈I_k；配合 DNCM 的 P@Q=I_3，初始映射 M≈I_3（输出≈输入）。
 5. **EfficientNet-B0 预训练权重**：首次运行会自动从 torchvision 下载 ImageNet 预训练权重（约 20MB），缓存到 `~/.cache/torch/hub/checkpoints/`。
 
 ## 引用

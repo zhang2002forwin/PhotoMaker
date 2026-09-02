@@ -1,12 +1,12 @@
 python train.py \
-    --coco_root /path/to/coco \
-    --lut_dir /path/to/luts \
-    --pretrained_path /path/to/efficientnet_b0.pth \
-    --ckpt_dir /path/to/checkpoints \
-    --epochs 100 \
+    --coco_root /home/zhangsy/zsy/dataset/coco \
+    --lut_dir ./luts/ \
+    --pretrained_path /home/zhangsy/zsy/models/google-efficientnet-b0/pytorch_model.bin  \
+    --ckpt_dir ./ckpts \
+    --epochs 20 \
     --batch_size 24 \
-    --lr 3e-4 \
-    --lr_step_size 24 \
+    --lr 5e-4 \
+    --lr_step_size 2400 \
     --lr_gamma 0.1 \
     --image_size 256 \
-    --device cuda
+    --device cuda 
