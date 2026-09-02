@@ -22,6 +22,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+try:
+    import wandb
+    HAS_WANDB = True
+except ImportError:
+    HAS_WANDB = False
+
 # 将项目根目录加入路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -114,6 +120,32 @@ def train(args):
     # ==================== TensorBoard ====================
     writer = SummaryWriter(log_dir=cfg.LOG_DIR)
 
+    # ==================== wandb ====================
+    use_wandb = args.use_wandb and HAS_WANDB
+    if args.use_wandb and not HAS_WANDB:
+        print("警告: 未安装 wandb，请运行 pip install wandb")
+    if use_wandb:
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            config={
+                "batch_size": cfg.BATCH_SIZE,
+                "epochs": cfg.NUM_EPOCHS,
+                "lr": cfg.LR_E,
+                "lr_step_size": cfg.LR_STEP_SIZE,
+                "lr_gamma": cfg.LR_GAMMA,
+                "image_size": cfg.IMAGE_SIZE,
+                "k_dim": cfg.K_DIM,
+                "lambda_rec": cfg.LAMBDA_REC,
+                "lambda_con": cfg.LAMBDA_CON,
+                "lambda_adv": cfg.LAMBDA_ADV,
+                "pretrained_path": args.pretrained_path or "auto_download",
+            },
+        )
+        print(f"wandb 已启用: project={args.wandb_project}, run={wandb.run.name}")
+        print(f"wandb 链接: {wandb.run.url}")
+
     # ==================== 训练循环 ====================
     step = 0
     for epoch in range(start_epoch, cfg.NUM_EPOCHS):
@@ -179,6 +211,18 @@ def train(args):
             n_batches += 1
             step += 1
 
+            # 每个 step 都记录 loss 到 wandb (step 级曲线)
+            if use_wandb:
+                wandb.log({
+                    "Step/rec": loss_rec.item(),
+                    "Step/con": loss_con.item(),
+                    "Step/adv_g": loss_adv_g.item(),
+                    "Step/adv_d": loss_adv_d.item(),
+                    "Step/total_G": loss_G.item(),
+                    "Step/epoch": epoch + 1,
+                }, step=step)
+
+            # 每 50 个 batch 打印一次 + 记录 TensorBoard
             if batch_idx % 50 == 0:
                 print(
                     f"Epoch [{epoch+1}/{cfg.NUM_EPOCHS}] "
@@ -204,6 +248,16 @@ def train(args):
             f"lr={current_lr:.2e} ===\n"
         )
         writer.add_scalar("LR/lr", current_lr, epoch)
+
+        if use_wandb:
+            wandb.log({
+                "Epoch/rec": avg["rec"],
+                "Epoch/con": avg["con"],
+                "Epoch/adv_g": avg["adv_g"],
+                "Epoch/adv_d": avg["adv_d"],
+                "Epoch/total": avg["total"],
+                "LR/lr": current_lr,
+            }, step=epoch)
 
         # ---- 学习率衰减 ----
         scheduler_G.step()
@@ -237,6 +291,8 @@ def train(args):
         )
 
     writer.close()
+    if use_wandb:
+        wandb.finish()
     print("训练完成。")
 
 

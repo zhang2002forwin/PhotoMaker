@@ -92,4 +92,13 @@ def get_train_parser():
                    help="模型检查点保存目录 (默认 checkpoints)")
     p.add_argument("--resume", type=str, default=None,
                    help="从指定检查点恢复训练")
+    # ==================== wandb 参数 ====================
+    p.add_argument("--use_wandb", action="store_true",
+                   help="启用 wandb 日志记录")
+    p.add_argument("--wandb_project", type=str, default="neural-preset",
+                   help="wandb 项目名称")
+    p.add_argument("--wandb_run_name", type=str, default=None,
+                   help="wandb run 名称 (不填则自动生成)")
+    p.add_argument("--wandb_entity", type=str, default=None,
+                   help="wandb entity/团队名称 (个人账号可不填)")
     return p
