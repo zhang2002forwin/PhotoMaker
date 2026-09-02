@@ -169,14 +169,3 @@ python inference.py \
 3. **训练数据**：论文使用 MS COCO，需自行下载。
 4. **编码器初始化**：FC 最后一层权重零初始化、偏置初始化为展平的单位阵，使训练初期 T≈I_k；配合 DNCM 的 P@Q=I_3，初始映射 M≈I_3（输出≈输入）。
 5. **EfficientNet-B0 预训练权重**：首次运行会自动从 torchvision 下载 ImageNet 预训练权重（约 20MB），缓存到 `~/.cache/torch/hub/checkpoints/`。
-
-## 引用
-
-```bibtex
-@InProceedings{NeuralPreset,
-  author = {Zhanghan Ke and Yuhao Liu and Lei Zhu and Nanxuan Zhao and Rynson W.H. Lau},
-  title = {Neural Preset for Color Style Transfer},
-  booktitle = {Computer Vision and Pattern Recognition Conference (CVPR)},
-  year = {2023},
-}
-```
