@@ -43,7 +43,7 @@ class Config:
     NUM_WORKERS = 4      # 数据加载的并行进程数
 
     # 学习率调度: 每 24 个 epoch 衰减为 0.1 倍
-    LR_STEP_SIZE = 24
+    LR_STEP_SIZE = 2
     LR_GAMMA = 0.1
 
     # 损失函数权重 (参考论文 λ=10)

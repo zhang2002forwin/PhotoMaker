@@ -3,8 +3,8 @@ python train.py \
     --lut_dir ./luts/ \
     --pretrained_path /home/zhangsy/zsy/models/google-efficientnet-b0/pytorch_model.bin  \
     --ckpt_dir ./ckpts \
-    --epochs 20 \
-    --batch_size 24 \
+    --epochs 8 \
+    --batch_size 32 \
     --lr 5e-4 \
     --lr_step_size 2400 \
     --lr_gamma 0.1 \

@@ -282,9 +282,48 @@ def train(args):
             n_batches += 1
             step += 1
 
-            # 定期验证
+            # 定期验证和保存检查点
             if step % cfg.EVAL_INTERVAL == 0:
                 run_validation(model, cfg, step, device)
+
+                # 保存检查点
+                ckpt_path = os.path.join(cfg.CHECKPOINT_DIR, f"neural_preset_step{step:07d}.pth")
+                torch.save(
+                    {
+                        "step": step,
+                        "epoch": epoch,
+                        "model": model.state_dict(),
+                        "discriminator": discriminator.state_dict(),
+                        "opt_G": opt_G.state_dict(),
+                        "opt_D": opt_D.state_dict(),
+                    },
+                    ckpt_path,
+                )
+                print(f"已保存检查点: {ckpt_path}")
+
+                # 保存最新版本
+                latest_path = os.path.join(cfg.CHECKPOINT_DIR, "latest.pth")
+                torch.save(
+                    {
+                        "step": step,
+                        "epoch": epoch,
+                        "model": model.state_dict(),
+                        "discriminator": discriminator.state_dict(),
+                        "opt_G": opt_G.state_dict(),
+                        "opt_D": opt_D.state_dict(),
+                    },
+                    latest_path,
+                )
+
+            # 每个 step 记录 loss 到 wandb (step 级曲线)
+            wandb.log({
+                "Step/rec": loss_rec.item(),
+                "Step/con": loss_con.item(),
+                "Step/adv_g": loss_adv_g.item(),
+                "Step/adv_d": loss_adv_d.item(),
+                "Step/total_G": loss_G.item(),
+                "Step/epoch": epoch + 1,
+            }, step=step)
 
             # 每 50 个 batch 打印一次
             if batch_idx % 50 == 0:
@@ -318,33 +357,6 @@ def train(args):
         # ---- 学习率衰减 ----
         scheduler_G.step()
         scheduler_D.step()
-
-        # ---- 保存检查点 ----
-        ckpt_path = os.path.join(cfg.CHECKPOINT_DIR, f"neural_preset_epoch{epoch+1}.pth")
-        torch.save(
-            {
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "discriminator": discriminator.state_dict(),
-                "opt_G": opt_G.state_dict(),
-                "opt_D": opt_D.state_dict(),
-            },
-            ckpt_path,
-        )
-        print(f"已保存检查点: {ckpt_path}")
-
-        # 保存最新版本
-        latest_path = os.path.join(cfg.CHECKPOINT_DIR, "latest.pth")
-        torch.save(
-            {
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "discriminator": discriminator.state_dict(),
-                "opt_G": opt_G.state_dict(),
-                "opt_D": opt_D.state_dict(),
-            },
-            latest_path,
-        )
 
     wandb.finish()
     print("训练完成。")
