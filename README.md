@@ -1,8 +1,9 @@
-# Neural Preset 复现
+## 效果展示
 
-基于论文 *Neural Preset for Color Style Transfer* (CVPR 2023) 的复现实现。
+![图1](sample/results/3__1.jpg)
 
-论文官方仓库仅提供在线 Demo，未公开训练代码。本项目按论文思路完整复现了模型架构和自监督训练流程。
+![图2](sample/results/3__2.jpg)
+
 
 ## 核心思路
 
